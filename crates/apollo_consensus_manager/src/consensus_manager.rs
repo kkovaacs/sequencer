@@ -3,10 +3,31 @@
 mod consensus_manager_test;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use apollo_batcher_types::batcher_types::RevertBlockInput;
-use apollo_batcher_types::communication::SharedBatcherClient;
+use apollo_batcher_types::batcher_types::{
+    CentralObjects,
+    DecisionReachedInput,
+    DecisionReachedResponse,
+    GetHeightResponse,
+    GetProposalContent,
+    GetProposalContentInput,
+    GetProposalContentResponse,
+    ProposalStatus,
+    ProposeBlockInput,
+    RevertBlockInput,
+    SendProposalContent,
+    SendProposalContentInput,
+    SendProposalContentResponse,
+    StartHeightInput,
+    ValidateBlockInput,
+};
+use apollo_batcher_types::communication::{
+    BatcherClient,
+    BatcherClientResult,
+    SharedBatcherClient,
+};
 use apollo_class_manager_types::transaction_converter::TransactionConverter;
 use apollo_class_manager_types::SharedClassManagerClient;
 use apollo_config_manager_types::communication::SharedConfigManagerClient;
@@ -32,6 +53,7 @@ use apollo_protobuf::consensus::{HeightAndRound, ProposalPart, StreamMessage, Vo
 use apollo_reverts::revert_blocks_and_eternal_pending;
 use apollo_signature_manager_types::SharedSignatureManagerClient;
 use apollo_state_sync_types::communication::SharedStateSyncClient;
+use apollo_state_sync_types::state_sync_types::SyncBlock;
 use apollo_time::time::DefaultClock;
 use async_trait::async_trait;
 use futures::channel::mpsc;
@@ -51,6 +73,109 @@ use crate::metrics::{
     CONSENSUS_VOTES_NUM_SENT_MESSAGES,
 };
 
+pub struct MockBatcherClient {
+    pub height: AtomicU64,
+}
+
+#[async_trait]
+impl BatcherClient for MockBatcherClient {
+    async fn propose_block(&self, input: ProposeBlockInput) -> BatcherClientResult<()> {
+        tracing::debug!(?input, "MockBatcherClient::propose_block called");
+        Ok(())
+    }
+
+    async fn get_height(&self) -> BatcherClientResult<GetHeightResponse> {
+        let height = self.height.load(Ordering::Relaxed);
+        tracing::debug!(%height, "MockBatcherClient::get_height called");
+        Ok(GetHeightResponse { height: BlockNumber(height) })
+    }
+
+    async fn get_proposal_content(
+        &self,
+        input: GetProposalContentInput,
+    ) -> BatcherClientResult<GetProposalContentResponse> {
+        tracing::debug!(?input, "MockBatcherClient::get_proposal_content called, sleeping 1s");
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        Ok(GetProposalContentResponse {
+            content: GetProposalContent::Finished {
+                id: Default::default(),
+                final_n_executed_txs: 0,
+            },
+        })
+    }
+
+    async fn validate_block(&self, input: ValidateBlockInput) -> BatcherClientResult<()> {
+        tracing::debug!(?input, "MockBatcherClient::validate_block called");
+        Ok(())
+    }
+
+    async fn send_proposal_content(
+        &self,
+        input: SendProposalContentInput,
+    ) -> BatcherClientResult<SendProposalContentResponse> {
+        tracing::debug!(?input, "MockBatcherClient::send_proposal_content called");
+        match input.content {
+            SendProposalContent::Txs(txs) => {
+                tracing::debug!(?txs, "MockBatcherClient::send_proposal_content: Txs");
+                Ok(SendProposalContentResponse { response: ProposalStatus::Processing })
+            }
+            SendProposalContent::Finish(final_number_of_transactions) => {
+                tracing::debug!(%final_number_of_transactions, "MockBatcherClient::send_proposal_content: Finish");
+                Ok(SendProposalContentResponse {
+                    response: ProposalStatus::Finished(Default::default()),
+                })
+            }
+            SendProposalContent::Abort => {
+                tracing::debug!("MockBatcherClient::send_proposal_content: Abort");
+                Ok(SendProposalContentResponse { response: ProposalStatus::Aborted })
+            }
+        }
+    }
+
+    async fn start_height(&self, input: StartHeightInput) -> BatcherClientResult<()> {
+        tracing::debug!(?input, "MockBatcherClient::start_height called");
+        self.height.store(input.height.0, Ordering::Relaxed);
+        Ok(())
+    }
+
+    async fn add_sync_block(&self, sync_block: SyncBlock) -> BatcherClientResult<()> {
+        tracing::debug!(?sync_block, "MockBatcherClient::add_sync_block called");
+        Ok(())
+    }
+
+    async fn decision_reached(
+        &self,
+        input: DecisionReachedInput,
+    ) -> BatcherClientResult<DecisionReachedResponse> {
+        tracing::debug!(?input, "MockBatcherClient::decision_reached called");
+        Ok(DecisionReachedResponse {
+            state_diff: Default::default(),
+            l2_gas_used: Default::default(),
+            central_objects: CentralObjects {
+                execution_infos: Default::default(),
+                bouncer_weights: Default::default(),
+                compressed_state_diff: Default::default(),
+                casm_hash_computation_data_sierra_gas: Default::default(),
+                casm_hash_computation_data_proving_gas: Default::default(),
+                compiled_class_hashes_for_migration: Default::default(),
+            },
+        })
+    }
+
+    async fn revert_block(&self, input: RevertBlockInput) -> BatcherClientResult<()> {
+        tracing::debug!(?input, "MockBatcherClient::revert_block called");
+        self.height
+            .compare_exchange(
+                input.height.0,
+                input.height.0 - 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            )
+            .unwrap();
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct ConsensusManager {
     pub config: ConsensusManagerConfig,
@@ -65,13 +190,14 @@ pub struct ConsensusManager {
 impl ConsensusManager {
     pub fn new(
         config: ConsensusManagerConfig,
-        batcher_client: SharedBatcherClient,
+        _batcher_client: SharedBatcherClient,
         state_sync_client: SharedStateSyncClient,
         class_manager_client: SharedClassManagerClient,
         signature_manager_client: SharedSignatureManagerClient,
         config_manager_client: SharedConfigManagerClient,
         l1_gas_price_provider: Arc<dyn L1GasPriceProviderClient>,
     ) -> Self {
+        let batcher_client = Arc::new(MockBatcherClient { height: AtomicU64::new(0) });
         Self {
             config,
             batcher_client,
@@ -84,6 +210,13 @@ impl ConsensusManager {
     }
 
     pub async fn run(&self) -> Result<(), ConsensusError> {
+        // Sleep to let sync advance and not reach a race condition where sync returns None to
+        // consensus even though the block exists in the network
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        let height =
+            self.state_sync_client.get_latest_block_number().await.unwrap().unwrap_or_default();
+        self.batcher_client.start_height(StartHeightInput { height }).await.unwrap();
+
         if self.config.revert_config.should_revert {
             self.revert_batcher_blocks(self.config.revert_config.revert_up_to_and_including).await;
         }
