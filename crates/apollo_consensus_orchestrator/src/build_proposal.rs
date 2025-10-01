@@ -250,28 +250,28 @@ async fn get_proposal_content(
                 // If the blob writing operation to Aerospike doesn't return a success status, we
                 // can't finish the proposal. Must wait for it at least until batcher_timeout is
                 // reached.
-                let remaining = (batcher_deadline - clock.now())
-                    .to_std()
-                    .unwrap_or_default()
-                    .max(MIN_WAIT_DURATION); // Ensure we wait at least 1 ms to avoid immediate timeout. 
-                match tokio::time::timeout(remaining, cende_write_success).await {
-                    Err(_) => {
-                        return Err(BuildProposalError::CendeWriteError(
-                            "Writing blob to Aerospike didn't return in time.".to_string(),
-                        ));
-                    }
-                    Ok(Ok(true)) => {
-                        info!("Writing blob to Aerospike completed successfully.");
-                    }
-                    Ok(Ok(false)) => {
-                        return Err(BuildProposalError::CendeWriteError(
-                            "Writing blob to Aerospike failed.".to_string(),
-                        ));
-                    }
-                    Ok(Err(e)) => {
-                        return Err(BuildProposalError::CendeWriteError(e.to_string()));
-                    }
-                }
+                // let remaining = (batcher_deadline - clock.now())
+                //     .to_std()
+                //     .unwrap_or_default()
+                //     .max(MIN_WAIT_DURATION); // Ensure we wait at least 1 ms to avoid immediate
+                // timeout. match tokio::time::timeout(remaining,
+                // cende_write_success).await {     Err(_) => {
+                //         return Err(BuildProposalError::CendeWriteError(
+                //             "Writing blob to Aerospike didn't return in time.".to_string(),
+                //         ));
+                //     }
+                //     Ok(Ok(true)) => {
+                //         info!("Writing blob to Aerospike completed successfully.");
+                //     }
+                //     Ok(Ok(false)) => {
+                //         return Err(BuildProposalError::CendeWriteError(
+                //             "Writing blob to Aerospike failed.".to_string(),
+                //         ));
+                //     }
+                //     Ok(Err(e)) => {
+                //         return Err(BuildProposalError::CendeWriteError(e.to_string()));
+                //     }
+                // }
 
                 let final_n_executed_txs_u64 = final_n_executed_txs
                     .try_into()
