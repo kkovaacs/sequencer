@@ -7,29 +7,22 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use apollo_batcher_types::batcher_types::{
-    GetProposalContent,
-    GetProposalContentInput,
-    ProposalId,
-    ProposeBlockInput,
+    GetProposalContent, GetProposalContentInput, ProposalId, ProposeBlockInput,
 };
 use apollo_batcher_types::communication::BatcherClientError;
 use apollo_class_manager_types::transaction_converter::TransactionConverterError;
 use apollo_consensus::types::{ProposalCommitment, Round};
 use apollo_l1_gas_price_types::errors::{EthToStrkOracleClientError, L1GasPriceClientError};
 use apollo_protobuf::consensus::{
-    ConsensusBlockInfo,
-    ProposalFin,
-    ProposalInit,
-    ProposalPart,
-    TransactionBatch,
+    ConsensusBlockInfo, ProposalFin, ProposalInit, ProposalPart, TransactionBatch,
 };
 use apollo_time::time::DateTime;
+use starknet_api::StarknetApiError;
 use starknet_api::block::{BlockNumber, GasPrice};
 use starknet_api::consensus_transaction::InternalConsensusTransaction;
 use starknet_api::core::ContractAddress;
 use starknet_api::data_availability::L1DataAvailabilityMode;
 use starknet_api::transaction::TransactionHash;
-use starknet_api::StarknetApiError;
 use strum::{EnumDiscriminants, EnumIter, EnumVariantNames, IntoStaticStr};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::AbortOnDropHandle;
@@ -37,12 +30,8 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::sequencer_consensus_context::{BuiltProposals, SequencerConsensusContextDeps};
 use crate::utils::{
-    convert_to_sn_api_block_info,
-    get_oracle_rate_and_prices,
-    truncate_to_executed_txs,
-    wait_for_retrospective_block_hash,
-    GasPriceParams,
-    StreamSender,
+    GasPriceParams, StreamSender, convert_to_sn_api_block_info, get_oracle_rate_and_prices,
+    truncate_to_executed_txs, wait_for_retrospective_block_hash,
 };
 
 // Minimal wait time that avoids an immediate timeout.
@@ -243,28 +232,28 @@ async fn get_proposal_content(
                 // If the blob writing operation to Aerospike doesn't return a success status, we
                 // can't finish the proposal. Must wait for it at least until batcher_timeout is
                 // reached.
-                let remaining = (args.batcher_deadline - args.deps.clock.now())
-                    .to_std()
-                    .unwrap_or_default()
-                    .max(MIN_WAIT_DURATION); // Ensure we wait at least 1 ms to avoid immediate timeout. 
-                match tokio::time::timeout(remaining, args.cende_write_success.borrow_mut()).await {
-                    Err(_) => {
-                        return Err(BuildProposalError::CendeWriteError(
-                            "Writing blob to Aerospike didn't return in time.".to_string(),
-                        ));
-                    }
-                    Ok(Ok(true)) => {
-                        info!("Writing blob to Aerospike completed successfully.");
-                    }
-                    Ok(Ok(false)) => {
-                        return Err(BuildProposalError::CendeWriteError(
-                            "Writing blob to Aerospike failed.".to_string(),
-                        ));
-                    }
-                    Ok(Err(e)) => {
-                        return Err(BuildProposalError::CendeWriteError(e.to_string()));
-                    }
-                }
+                // let remaining = (args.batcher_deadline - args.deps.clock.now())
+                //     .to_std()
+                //     .unwrap_or_default()
+                //     .max(MIN_WAIT_DURATION); // Ensure we wait at least 1 ms to avoid immediate timeout.
+                // match tokio::time::timeout(remaining, args.cende_write_success.borrow_mut()).await {
+                //     Err(_) => {
+                //         return Err(BuildProposalError::CendeWriteError(
+                //             "Writing blob to Aerospike didn't return in time.".to_string(),
+                //         ));
+                //     }
+                //     Ok(Ok(true)) => {
+                //         info!("Writing blob to Aerospike completed successfully.");
+                //     }
+                //     Ok(Ok(false)) => {
+                //         return Err(BuildProposalError::CendeWriteError(
+                //             "Writing blob to Aerospike failed.".to_string(),
+                //         ));
+                //     }
+                //     Ok(Err(e)) => {
+                //         return Err(BuildProposalError::CendeWriteError(e.to_string()));
+                //     }
+                // }
 
                 let final_n_executed_txs_u64 = final_n_executed_txs
                     .try_into()
