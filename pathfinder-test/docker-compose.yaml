@@ -28,7 +28,7 @@ services:
       context: ..
       dockerfile: deployments/images/sequencer/Dockerfile
     environment:
-      RUST_LOG: info,apollo_l1_provider=debug,apollo_consensus=info
+      RUST_LOG: info,apollo_l1_provider=debug,apollo_consensus=info,libp2p_kad=trace,new_established_connection=trace,libp2p_gossipsub=trace
     volumes:
       - ../crates/apollo_deployments/resources:/cfg
     command: [
